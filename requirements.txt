@@ -1,0 +1,9 @@
+tqdm
+lief
+numpy
+sklearn
+filemagic
+capstone
+datasets
+tokenizers
+transformers
