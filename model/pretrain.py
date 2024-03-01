@@ -48,6 +48,7 @@ configuration = models.InstructionTraceConfig(
     vocab_size=tokenizer.get_vocab_size(),
     next_token_id=tokenizer.token_to_id("[NEXT]"),
     max_position_embeddings=sequence_length,
+    eigenvector_dim = 4, #change this to match argument from preprocessing step. User input?
     type_vocab_size=1,
 )
 
@@ -58,6 +59,8 @@ if arguments.checkpoint:
     model.load_state_dict(state)
 
 dataset = datasets.load_from_disk(arguments.dataset)
+
+#dataset = dataset.map(remove_columns=['function', 'pretokens'], batched=True) #Already did this in dataset generation
 
 collator = transformers.DataCollatorForLanguageModeling(
     tokenizer=transformers.PreTrainedTokenizerFast(
@@ -140,6 +143,7 @@ for epoch in range(arguments.start_epoch, arguments.start_epoch + epochs):
             outputs = model(**batch)
 
         references = batch["labels"]
+        #print(references)
         predictions = torch.argmax(outputs.logits, dim=-1)
 
         predictions = predictions[references != -100]

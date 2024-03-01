@@ -4,19 +4,25 @@ import json
 import logging
 import argparse
 
-import lief
 import magic
 import capstone
 
+import angr
+from angrutils import *
+import networkx as nx
+import numpy as np
 
-def x86(instruction):
+def x86(instruction, idx, function_lpe):
     pretokens = []
+    token_lpes = []
 
     # In most cases this is a single mnemonic, but can be two in the case
     # of special prefixes - e.g., REP
     mnemonics = instruction.mnemonic.split()
     for mnemonic in mnemonics:
         pretokens.append(mnemonic)
+        token_lpes.append(function_lpe)
+        #token_lpes.append(token_pe(function_lpe, idx))
 
     if instruction.op_str:
         operands = instruction.op_str.split(", ")
@@ -31,19 +37,27 @@ def x86(instruction):
 
                 operand = str(int(operand, 16))
                 pretokens.append(operand)
+                token_lpes.append(function_lpe)
+                #token_lpes.append(token_pe(function_lpe, idx))
             # Memory addresses
             elif "[" in operand:
                 # Optional size directives
                 if "ptr" in operand:
                     size, _, operand = operand.split(maxsplit=2)
                     pretokens.append(size)
+                    token_lpes.append(function_lpe)
+                    #token_lpes.append(token_pe(function_lpe, idx))
                 # Optional segment indicators
                 if ":" in operand:
                     segment, operand = operand.split(":")
                     pretokens.append(segment)
+                    token_lpes.append(function_lpe)
+                    #token_lpes.append(token_pe(function_lpe, idx))
 
                 operand = operand[1:-1]
                 pretokens.append("[")
+                token_lpes.append(function_lpe)
+                #token_lpes.append(token_pe(function_lpe, idx))
 
                 split = re.split(r"(\+|-|\*)", operand)
                 split = [o.strip() for o in split]
@@ -53,19 +67,28 @@ def x86(instruction):
                         op = str(int(op, 16))
 
                     pretokens.append(op)
+                    token_lpes.append(function_lpe)
+                    #token_lpes.append(token_pe(function_lpe, idx))
 
                 pretokens.append("]")
+                token_lpes.append(function_lpe)
+                #token_lpes.append(token_pe(function_lpe, idx))
             # Everything else should be a register
             else:
                 pretokens.append(operand)
+                token_lpes.append(function_lpe)
+                #token_lpes.append(token_pe(function_lpe, idx))
 
-    return pretokens
+    return {"pretokens": pretokens, "token_lpes": token_lpes}
 
 
-def arm(instruction):
+def arm(instruction, idx, function_lpe):
     pretokens = []
+    token_lpes = []
 
     pretokens.append(instruction.mnemonic)
+    token_lpes.append(function_lpe)
+    #token_lpes.append(token_pe(function_lpe, idx))
 
     if instruction.op_str:
         operands = instruction.op_str.split(", ")
@@ -86,28 +109,48 @@ def arm(instruction):
                     if " " in operand:
                         shift, operand = operand.split()
                         pretokens.append(shift)
+                        token_lpes.append(function_lpe)
+                        #token_lpes.append(token_pe(function_lpe, idx))
 
                     if operand.startswith("#"):
                         operand = str(int(operand[1:], 16))
 
                     pretokens.append(operand)
+                    token_lpes.append(function_lpe)
+                    #token_lpes.append(token_pe(function_lpe, idx))
                     pretokens.append("]")
+                    token_lpes.append(function_lpe)
+                    #token_lpes.append(token_pe(function_lpe, idx))
 
                     if preindex:
                         pretokens.append("!")
+                        token_lpes.append(function_lpe)
+                        #token_lpes.append(token_pe(function_lpe, idx))
 
                     expecting = False
                 else:
                     pretokens.append(operand)
+                    token_lpes.append(function_lpe)
+                    #token_lpes.append(token_pe(function_lpe, idx))
             # Offset syntax
             elif "[" in operand:
                 pretokens.append("[")
+                token_lpes.append(function_lpe)
+                #token_lpes.append(token_pe(function_lpe, idx))
                 if "]" in operand:
                     pretokens.append(operand[1:-1])
+                    token_lpes.append(function_lpe)
+                    #token_lpes.append(token_pe(function_lpe, idx))
                     pretokens.append("]")
+                    token_lpes.append(function_lpe)
+                    #token_lpes.append(token_pe(function_lpe, idx))
                 else:
                     pretokens.append(operand[1:])
+                    token_lpes.append(function_lpe)
+                    #token_lpes.append(token_pe(function_lpe, idx))
                     pretokens.append("+")
+                    token_lpes.append(function_lpe)
+                    #token_lpes.append(token_pe(function_lpe, idx))
 
                     expecting = True
             # Immediate values:
@@ -118,29 +161,40 @@ def arm(instruction):
                     operand = str(float(operand[1:]))
 
                 pretokens.append(operand)
+                token_lpes.append(function_lpe)
+                #token_lpes.append(token_pe(function_lpe, idx))
             # Shifted immediate values
             elif " " in operand:
                 shift, operand = operand.split()
                 pretokens.append(shift)
+                token_lpes.append(function_lpe)
+                #token_lpes.append(token_pe(function_lpe, idx))
 
                 if operand.startswith("#"):
                     operand = str(int(operand[1:], 16))
 
                 pretokens.append(operand)
+                token_lpes.append(function_lpe)
+                #token_lpes.append(token_pe(function_lpe, idx))
 
             # Everything else should be a register
             else:
                 pretokens.append(operand)
+                token_lpes.append(function_lpe)
+                #token_lpes.append(token_pe(function_lpe, idx))
 
         assert expecting is False
 
-    return pretokens
+    return {"pretokens": pretokens, "token_lpes": token_lpes}
 
 
-def mips(instruction):
+def mips(instruction, idx, function_lpe):
     pretokens = []
+    token_lpes = []
 
     pretokens.append(instruction.mnemonic)
+    token_lpes.append(function_lpe)
+    #token_lpes.append(token_pe(function_lpe, idx))
 
     if instruction.op_str:
         operands = instruction.op_str.split(", ")
@@ -151,51 +205,69 @@ def mips(instruction):
                 offset, operand = operand.split("(")
 
                 pretokens.append("[")
+                token_lpes.append(function_lpe)
+                #token_lpes.append(token_pe(function_lpe, idx))
 
                 assert operand[-1] == ")"
 
                 pretokens.append(operand[1:-1])
+                token_lpes.append(function_lpe)
+                #token_lpes.append(token_pe(function_lpe, idx))
                 pretokens.append("+")
+                token_lpes.append(function_lpe)
+                #token_lpes.append(token_pe(function_lpe, idx))
 
                 if offset.startswith("0x") or offset.startswith("-0x"):
                     offset = str(int(offset, 16))
 
                 pretokens.append(offset)
+                token_lpes.append(function_lpe)
+                #token_lpes.append(token_pe(function_lpe, idx))
 
                 pretokens.append("]")
+                token_lpes.append(function_lpe)
+                #token_lpes.append(token_pe(function_lpe, idx))
             # Immediate value
             elif operand.startswith("0x") or operand.startswith("-0x"):
                 operand = str(int(operand, 16))
                 pretokens.append(operand)
+                token_lpes.append(function_lpe)
+                #token_lpes.append(token_pe(function_lpe, idx))
             # Everything else should be a trivial value (register or base 10 immediate)
             else:
                 if operand[0] == "$":
                     operand = operand[1:]
 
                 pretokens.append(operand)
+                token_lpes.append(function_lpe)
+                #token_lpes.append(token_pe(function_lpe, idx))
 
-    return pretokens
+    return {"pretokens": pretokens, "token_lpes": token_lpes}
 
 
-def preprocess(instructions, parser):
+def preprocess(instructions, idx, function_lpe, parser):
     pretokens = []
+    token_lpes = []
 
     for instruction in instructions:
-        logging.debug(
-            f"0x{instruction.address:x}\t{instruction.mnemonic} {instruction.op_str}"
-        )
+        logging.debug(f"0x{instruction.address:x}\t{instruction.mnemonic} {instruction.op_str}")
 
-        pretokens += parser(instruction)
+        instruction_parsed = parser(instruction, idx, function_lpe)
+        pretokens += instruction_parsed["pretokens"]
+        token_lpes += instruction_parsed["token_lpes"]
 
         pretokens.append("[NEXT]")
+        token_lpes.append(function_lpe) #we need all tokens to have the same pe
+        #token_lpes.append(np.zeros(len(function_lpe)).tolist())
+        #if len(function_lpe[0]): #non-single element lpe
+            #token_lpes.append(np.zeros(len(function_lpe[0])).tolist())  #lpe for next token is 0 for all dimensions
+        #else: #single element lpe
+            #token_lpes.append(np.zeros(1).tolist())  #lpe is 0 for just one dimension
+        
+    return {"pretokens": pretokens, "token_lpes": token_lpes}
 
-    if pretokens and pretokens[-1] == "[NEXT]":
-        pretokens.pop()
 
-    return pretokens
-
-
-def parse(binary):
+def parse(binary, output_path):
     with magic.Magic() as m:
         filemagic = m.id_filename(binary)
 
@@ -214,45 +286,80 @@ def parse(binary):
     else:
         raise Exception(f"unsupported file type: {filemagic}")
 
-    binary = lief.parse(binary)
+    p = angr.Project(binary, load_options={'auto_load_libs':False})
+    cfg =  p.analyses.CFGFast(normalize = True)
 
-    engine = capstone.Cs(arch, mode)
-    engine.detail = True
+    with open(output_path, "w") as f:
 
-    functions = {}
-    for function in binary.functions:
-        if function.size == 0:
-            logging.debug(
-                f"skipping empty function: {function.name}(0x{function.address:x})"
-            )
-            continue
+        for function in cfg.functions.values():
+            label = function.name
 
-        logging.debug(f"function: {function.name}(0x{function.address:x})")
+            if function.size == 0:
+                logging.debug(f"skipping empty function: {function.name}(0x{function.addr:x})")
+                continue
 
-        content = bytes(
-            binary.get_content_from_virtual_address(function.address, function.size)
-        )
-        instructions = engine.disasm(content, function.address)
+            logging.debug(f"function: {function.name}(0x{function.addr:x})")
+            g = function.transition_graph.to_undirected()
+            node_list = g.nodes()
+            eigvecs = laplacian_pe(g)
+            eigvec_norm = np.linalg.norm(eigvecs, axis=0).tolist() #get vector norm of eigenvectors
+            function_lpe = pad_lpe(eigvec_norm)
 
-        if function.name:
-            label = f"0x{function.address:x}:{function.name}"
-        else:
-            label = hex(function.address)
+            pretokens = []
+            token_lpes = []
+            for block in function.blocks:
+                idx = get_node_index(hex(block.addr), node_list)
+                instructions = block.capstone.insns
 
-        functions[label] = preprocess(instructions, parser)
+                block_preprocessed = preprocess(instructions, idx, function_lpe, parser)
+                pretokens += block_preprocessed["pretokens"]
+                token_lpes += block_preprocessed["token_lpes"]  #up to here so far
 
-    # pretokens = set()
-    # for function in functions.values():
-    #    pretokens |= set(function)
-    # nonnumbers = set()
-    # for pretoken in pretokens:
-    #    try:
-    #        int(pretoken)
-    #    except ValueError:
-    #        nonnumbers.add(pretoken)
-    # print(nonnumbers)
+            
+            if pretokens and pretokens[-1] == "[NEXT]":
+                pretokens.pop()
+                token_lpes.pop()
+            
+            json.dump({"function": label,
+                       "pretokens": pretokens,
+                       "position_ids": token_lpes}, f)
+            f.write("\n") #output needs to be in jsonlines format
 
-    return functions
+
+def laplacian_pe(g):
+    laplacian = nx.normalized_laplacian_matrix(g).toarray()
+    eigvals, eigvecs = np.linalg.eig(laplacian)
+    index = eigvals.argsort()
+    eigvals, eigvecs = eigvals[index], np.real(eigvecs[:,index])
+
+    if eigvecs.shape[1] > 1: #returns all eigenvectors beyond first eigenvector
+        return eigvecs[:, 1:dim+1] #remove first column corresponding to trivial eigenvec
+    else: #returns first eigenvector
+        #return eigvecs.tolist() #might do something different here for functions that have only 1 node
+        return np.zeros(eigvecs.shape).tolist()
+
+dim = 4 #placeholder, but probably want to get user input for this
+def pad_lpe(function_lpe): #pad according to the lpe dimensions we chose
+    #pad_width = dim - len(function_lpe[0])
+    pad_width = dim - len(function_lpe)
+    #padded_function_lpe = np.pad(function_lpe, ((0, 0), (0, pad_width)), 'constant')
+    padded_function_lpe = function_lpe + ([0]*pad_width)
+    return padded_function_lpe
+
+
+def get_node_index(block_addr, node_list):
+    for index, node in enumerate(node_list):
+        if block_addr == hex(node.addr):
+            return index
+
+
+#def token_pe(function_lpe, idx):
+    #if len(function_lpe) > 1: #function has more than 1 eigenvector
+        #return function_lpe[idx,:].tolist()
+    #else: #function has only the trivial eigenvector
+        #return function_lpe[idx].tolist()
+
+
 
 
 if __name__ == "__main__":
@@ -289,17 +396,13 @@ if __name__ == "__main__":
     os.makedirs(arguments.output, exist_ok=True)
 
     for binary in arguments.binaries:
-        functions = parse(binary)
-
         name = os.path.normpath(binary).split(os.path.sep)
         name = "-".join(name[-arguments.path_parts :])
 
         path = os.path.join(arguments.output, name)
         path = f"{path}.json"
 
-        with open(path, "w") as f:
-            json.dump(functions, f)
-
+        parse(binary, path)
         logging.info(f"processed {binary} ({path})")
 
     logging.info("done")

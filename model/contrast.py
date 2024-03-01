@@ -45,6 +45,7 @@ configuration = models.InstructionTraceConfig(
     vocab_size=tokenizer.get_vocab_size(),
     next_token_id=tokenizer.token_to_id("[NEXT]"),
     max_position_embeddings=sequence_length,
+    eigenvector_dim = 4, #change this to match argument from preprocessing step. User input?
     type_vocab_size=1,
     frozen_encoder=True,
 )
