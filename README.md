@@ -10,6 +10,11 @@ Install the dependencies for this project with pip.
 pip install -r requirements.txt
 ```
 
+### Pre-Trainted Models
+
+Pre-trained models are available on request - please contact me and we can
+discuss how to transfer them to you.
+
 ## Usage
 
 This repository is essentially a collection of scripts for training and using
