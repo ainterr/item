@@ -50,26 +50,41 @@ for name in tqdm.tqdm(arguments.parsed, desc="loading"):
         binary = os.path.splitext(os.path.basename(name))[0]
         binary = binary.replace(arch, "").replace(opt, "").strip("-")
 
-        data = json.load(f)
+        #data = json.load(f)
+        #data = datasets.load_dataset("json", data_files=arguments.parsed)
+        functions = []
+        for line in f:
+            function = (json.loads(line))
+            functions.append(function)
 
-        for label, tokens in data.items():
-            label = label.split(":")[-1]
+        data = datasets.Dataset.from_list(functions)
 
-            if label.startswith("0x"):
+        #for label, tokens in data.items():
+        for item in data:
+            #label = label.split(":")[-1]
+            label = item["function"]
+
+            if label.startswith("sub"):
                 # skip unnamed functions
                 continue
 
             name = f"{binary}:{label}"
 
+            tokens = item["pretokens"]
+
             sample = " ".join(tokens)
             sample = f"[CLS] {sample}"
+            position_ids = [item["position_ids"][0]] + item["position_ids"]
 
             if name not in samples:
                 samples[name] = {}
             if arch not in samples[name]:
                 samples[name][arch] = {}
+            if opt not in samples[name][arch]:
+                samples[name][arch][opt] = {}
 
-            samples[name][arch][opt] = sample
+            samples[name][arch][opt]["tokens"] = sample
+            samples[name][arch][opt]["position_ids"] = position_ids
 
 
 def select(choices):
@@ -106,13 +121,15 @@ for name1 in tqdm.tqdm(sorted(samples.keys()), desc="generating"):
                 "name": name1,
                 "arch": arch1,
                 "opt": opt1,
-                "text": samples[name1][arch1][opt1],
+                "text": samples[name1][arch1][opt1]["tokens"],
+                "position_ids": samples[name1][arch1][opt1]["position_ids"]
             },
             {
                 "name": name2,
                 "arch": arch2,
                 "opt": opt2,
-                "text": samples[name2][arch2][opt2],
+                "text": samples[name2][arch2][opt2]["tokens"],
+                "position_ids": samples[name2][arch2][opt2]["position_ids"]
             },
         ]
     )
@@ -124,10 +141,12 @@ dataset = {
     # "arch1": [p[0]['arch'] for p in pairs],
     # "opt1": [p[0]['opt'] for p in pairs],
     "text1": [p[0]["text"] for p in pairs],
+    "position_ids1": [p[0]["position_ids"] for p in pairs],
     # "name2": [p[1]['name'] for p in pairs],
     # "arch2": [p[1]['arch'] for p in pairs],
     # "opt2": [p[1]['opt'] for p in pairs],
     "text2": [p[1]["text"] for p in pairs],
+    "position_ids2": [p[1]["position_ids"] for p in pairs],
     "label": labels,
 }
 dataset = datasets.Dataset.from_dict(dataset)
@@ -146,6 +165,26 @@ def tokenize(batch):
     batch["attention_mask1"] = [s.attention_mask for s in encoded1]
     batch["input_ids2"] = [s.ids for s in encoded2]
     batch["attention_mask2"] = [s.attention_mask for s in encoded2]
+
+    for list in batch["position_ids1"]: #truncate position_ids
+        #print(len(list))
+        if len(list) > sequence_length: #truncate
+            for i in range(0, len(list) - sequence_length):
+                list.pop()
+    #for list in batch["position_ids"]: #pad
+        elif len(list) < sequence_length: #pad
+            for i in range(0, sequence_length - len(list)):
+                list.append(list[0])
+
+    for list in batch["position_ids2"]: #truncate position_ids
+        #print(len(list))
+        if len(list) > sequence_length: #truncate
+            for i in range(0, len(list) - sequence_length):
+                list.pop()
+    #for list in batch["position_ids"]: #pad
+        elif len(list) < sequence_length: #pad
+            for i in range(0, sequence_length - len(list)):
+                list.append(list[0])
 
     return batch
 

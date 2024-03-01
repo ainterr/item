@@ -6,7 +6,7 @@ import argparse
 import collections
 
 import tokenizers
-
+from datasets import load_dataset
 import tokens
 
 
@@ -29,13 +29,26 @@ logging.basicConfig(
 logging.info(f"loading {len(arguments.parsed)} preprocessed binaries...")
 
 dictionary = collections.defaultdict(int)
+#print(dictionary)
 for p in arguments.parsed:
+    functions = []
+    #print(p)
     with open(p, "r") as f:
-        functions = json.load(f)
+        #file = f"{p}"
+        #print(file)
+        #functions = load_dataset("json", data_files=file)
+        for line in f:
+            functions.append(json.loads(line))
+        #print(functions)
+#functions = json.load(f)
+    #print("dataset loaded")
 
-    for preprocessed in functions.values():
-        for token in preprocessed:
-            dictionary[token] += 1
+    #for preprocessed in functions["train"]["pretokens"]: #default split is train
+    for function in functions:
+        for preprocessed in function["pretokens"]:
+            for token in preprocessed:
+                dictionary[token] += 1
+    print("done loading", p)
 
 words, numbers = {}, {}
 for token in dictionary.keys():
