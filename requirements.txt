@@ -1,7 +1,7 @@
 tqdm
 lief
 numpy
-sklearn
+scikit-learn
 filemagic
 capstone
 datasets
