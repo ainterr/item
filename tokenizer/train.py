@@ -9,6 +9,7 @@ import tokenizers
 from datasets import load_dataset
 import tokens
 
+print("Original item2.0 minus small and unconnected functions\n")
 
 parser = argparse.ArgumentParser(
     description="train a tokenizer on preprocessed binary data"

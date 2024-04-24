@@ -3,6 +3,7 @@ import tqdm
 import argparse
 
 from sklearn import metrics
+from safetensors.torch import load_file
 
 import torch
 from torch.utils.data import DataLoader
@@ -15,6 +16,7 @@ import datasets
 
 import models
 
+print("Original item2.0 minus small and unconnected functions\n")
 
 parser = argparse.ArgumentParser(
     description="fine-tune the model on a contrastive learning dataset",
@@ -52,7 +54,8 @@ configuration = models.InstructionTraceConfig(
 
 model = models.InstructionTraceEncoderTransformerForSequenceSimilarity(configuration)
 
-state = torch.load(os.path.join(arguments.model, "pytorch_model.bin"))
+#state = torch.load(os.path.join(arguments.model, "pytorch_model.bin"))
+state = load_file(os.path.join(arguments.model, "model.safetensors"))
 model.embedding.load_state_dict(state, strict=False)
 
 dataset = datasets.load_from_disk(arguments.dataset)

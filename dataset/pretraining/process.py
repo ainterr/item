@@ -6,6 +6,7 @@ import tokenizers
 import numpy as np
 from datasets import Dataset
 
+print("Original item2.0 minus small and unconnected functions\n")
 
 parser = argparse.ArgumentParser(
     description="process preprocessed binaries into dataset for pretraining"
@@ -62,20 +63,20 @@ def tokenize(batch):
     for list in batch["position_ids"]: #truncate position_ids
         #print(len(list))
         if len(list) > sequence_length: #truncate
-            for i in range(0, len(list) - sequence_length):
+            for _ in range(0, len(list) - sequence_length):
                 list.pop()
     #for list in batch["position_ids"]: #pad
         elif len(list) < sequence_length: #pad
             if len(list) != 0:
-                for i in range(0, sequence_length - len(list)):
+                for _ in range(0, sequence_length - len(list)):
                     list.append(list[0])
             else:
-                for i in range(0, sequence_length - len(list)):
+                for _ in range(0, sequence_length - len(list)):
                     list.append([0, 0, 0, 0])
 
     return batch
 
 
-dataset = dataset.map(tokenize, batched=True, remove_columns=["function", "pretokens"], num_proc=8)
+dataset = dataset.map(tokenize, batched=True, remove_columns=["function", "pretokens"], num_proc=1)
 
 dataset.save_to_disk(arguments.output)

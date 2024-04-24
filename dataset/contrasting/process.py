@@ -8,8 +8,9 @@ import tokenizers
 
 import datasets
 
+print("Original item2.0 minus small and unconnected functions\n")
 
-ARCHITECTURES = ["x86-64", "arm-64", "mips-64"]
+ARCHITECTURES = ["x86-64", "arm-64", "mips-64", "x86-32"]
 OPTIMIZATIONS = ["O0", "O1", "O2", "O3"]
 
 
@@ -66,6 +67,9 @@ for name in tqdm.tqdm(arguments.parsed, desc="loading"):
 
             if label.startswith("sub"):
                 # skip unnamed functions
+                continue
+            
+            if not item["position_ids"]:
                 continue
 
             name = f"{binary}:{label}"
@@ -169,28 +173,36 @@ def tokenize(batch):
     for list in batch["position_ids1"]: #truncate position_ids
         #print(len(list))
         if len(list) > sequence_length: #truncate
-            for i in range(0, len(list) - sequence_length):
+            for _ in range(0, len(list) - sequence_length):
                 list.pop()
     #for list in batch["position_ids"]: #pad
         elif len(list) < sequence_length: #pad
-            for i in range(0, sequence_length - len(list)):
-                list.append(list[0])
+            if len(list) != 0:
+                for _ in range(0, sequence_length - len(list)):
+                    list.append(list[0])
+            else:
+                for _ in range(0, sequence_length - len(list)):
+                    list.append([0, 0, 0, 0])
 
     for list in batch["position_ids2"]: #truncate position_ids
         #print(len(list))
         if len(list) > sequence_length: #truncate
-            for i in range(0, len(list) - sequence_length):
+            for _ in range(0, len(list) - sequence_length):
                 list.pop()
     #for list in batch["position_ids"]: #pad
         elif len(list) < sequence_length: #pad
-            for i in range(0, sequence_length - len(list)):
-                list.append(list[0])
+            if len(list) != 0:
+                for _ in range(0, sequence_length - len(list)):
+                    list.append(list[0])
+            else:
+                for _ in range(0, sequence_length - len(list)):
+                    list.append([0, 0, 0, 0])
 
     return batch
 
 
 dataset = dataset.map(
-    tokenize, batched=True, remove_columns=["text1", "text2"], num_proc=8
+    tokenize, batched=True, remove_columns=["text1", "text2"], num_proc=4
 )
 
 dataset.save_to_disk(arguments.output)

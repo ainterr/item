@@ -16,6 +16,7 @@ import datasets
 
 import models
 
+print("Original item2.0 minus small and unconnected functions\n")
 
 parser = argparse.ArgumentParser(
     description="pretrain the model on a masked language modeling dataset",

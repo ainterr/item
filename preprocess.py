@@ -12,6 +12,8 @@ from angrutils import *
 import networkx as nx
 import numpy as np
 
+print("Original item2.0 minus small and unconnected functions\n")
+
 def x86(instruction, idx, function_lpe):
     pretokens = []
     token_lpes = []
@@ -275,6 +277,10 @@ def parse(binary, output_path):
         arch = capstone.CS_ARCH_X86
         mode = capstone.CS_MODE_64
         parser = x86
+    elif "80386" in filemagic and "32-bit" in filemagic:
+        arch = capstone.CS_ARCH_X86
+        mode = capstone.CS_MODE_32
+        parser = x86
     elif "aarch64" in filemagic:
         arch = capstone.CS_ARCH_ARM64
         mode = capstone.CS_MODE_ARM
@@ -302,8 +308,12 @@ def parse(binary, output_path):
             g = function.transition_graph.to_undirected()
             node_list = g.nodes()
             eigvecs = laplacian_pe(g)
-            eigvec_norm = np.linalg.norm(eigvecs, axis=0).tolist() #get vector norm of eigenvectors
-            function_lpe = pad_lpe(eigvec_norm)
+            eigvec_norm = np.linalg.norm(eigvecs, axis=0) #get vector norm of eigenvectors
+            function_lpe = pad_lpe(eigvec_norm).tolist()
+            
+            if g.number_of_nodes() < 2 or nx.is_connected(g) == False:
+                logging.debug(f"skipping small or unconnected function: {function.name}(0x{function.addr:x})")
+                continue
 
             pretokens = []
             token_lpes = []
@@ -327,24 +337,25 @@ def parse(binary, output_path):
 
 
 def laplacian_pe(g):
-    laplacian = nx.normalized_laplacian_matrix(g).toarray()
-    eigvals, eigvecs = np.linalg.eig(laplacian)
+    laplacian = nx.normalized_laplacian_matrix(g).toarray() #Build the graph Laplacian matrix
+    eigvals, eigvecs = np.linalg.eig(laplacian) #Compute the eigenvectors for the Laplacian matrix
     index = eigvals.argsort()
-    eigvals, eigvecs = eigvals[index], np.real(eigvecs[:,index])
+    eigvals, eigvecs = eigvals[index], np.real(eigvecs[:,index]) #Sorted by eigenvalue
 
     if eigvecs.shape[1] > 1: #returns all eigenvectors beyond first eigenvector
         return eigvecs[:, 1:dim+1] #remove first column corresponding to trivial eigenvec
     else: #returns first eigenvector
         #return eigvecs.tolist() #might do something different here for functions that have only 1 node
-        return np.zeros(eigvecs.shape).tolist()
+        return np.zeros((eigvecs.shape[0], dim))
 
 dim = 4 #placeholder, but probably want to get user input for this
 def pad_lpe(function_lpe): #pad according to the lpe dimensions we chose
     #pad_width = dim - len(function_lpe[0])
     pad_width = dim - len(function_lpe)
     #padded_function_lpe = np.pad(function_lpe, ((0, 0), (0, pad_width)), 'constant')
-    padded_function_lpe = function_lpe + ([0]*pad_width)
-    return padded_function_lpe
+    for _ in range(0, pad_width):
+        function_lpe = np.append(function_lpe, 0)
+    return function_lpe
 
 
 def get_node_index(block_addr, node_list):
@@ -358,9 +369,6 @@ def get_node_index(block_addr, node_list):
         #return function_lpe[idx,:].tolist()
     #else: #function has only the trivial eigenvector
         #return function_lpe[idx].tolist()
-
-
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -394,7 +402,7 @@ if __name__ == "__main__":
     logging.info(f"preprocessing {len(arguments.binaries)} binaries...")
 
     os.makedirs(arguments.output, exist_ok=True)
-
+    
     for binary in arguments.binaries:
         name = os.path.normpath(binary).split(os.path.sep)
         name = "-".join(name[-arguments.path_parts :])
