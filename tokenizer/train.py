@@ -30,12 +30,22 @@ logging.info(f"loading {len(arguments.parsed)} preprocessed binaries...")
 
 dictionary = collections.defaultdict(int)
 for p in arguments.parsed:
-    with open(p, "r") as f:
-        functions = json.load(f)
+    #with open(p, "r") as f:
+        #functions = json.load(f)
+    with open(p, "rb") as f:
+        functions = pickle.load(f)
+        
+    for graph in functions.values():
+        for node in graph:
+            node = node.split(", ")
+            if node[-1] == "[NEXT]":
+                node.pop()
+            for token in node:
+                dictionary[token] += 1
 
-    for preprocessed in functions.values():
-        for token in preprocessed:
-            dictionary[token] += 1
+    #for preprocessed in functions.values():
+        #for token in preprocessed:
+            #dictionary[token] += 1
 
 words, numbers = {}, {}
 for token in dictionary.keys():
