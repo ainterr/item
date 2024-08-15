@@ -4,6 +4,7 @@ import json
 import logging
 import argparse
 import collections
+import pickle
 
 import tokenizers
 
@@ -50,7 +51,7 @@ for p in arguments.parsed:
 words, numbers = {}, {}
 for token in dictionary.keys():
     try:
-        int(token)
+        int(token, 0) #invoke prefix-guessing behavior
         numbers[token] = dictionary[token]
     except:
         words[token] = dictionary[token]

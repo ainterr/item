@@ -8,8 +8,13 @@ import tokenizers
 
 import datasets
 
+import pickle
+import networkx as nx
+import numpy as np
 
-ARCHITECTURES = ["x86-64", "arm-64", "mips-64"]
+print("Ghidra fiedler vector\n")
+
+ARCHITECTURES = ["x86-64", "arm-64", "mips-64", "x86-32"]
 OPTIMIZATIONS = ["O0", "O1", "O2", "O3"]
 
 
@@ -27,12 +32,12 @@ random.seed(42)
 
 sequence_length = 512
 tokenizer = tokenizers.Tokenizer.from_file(arguments.tokenizer)
-tokenizer.enable_padding(length=sequence_length)
-tokenizer.enable_truncation(max_length=sequence_length)
+#tokenizer.enable_padding(length=sequence_length)
+#tokenizer.enable_truncation(max_length=sequence_length)
 
 samples = {}
 for name in tqdm.tqdm(arguments.parsed, desc="loading"):
-    with open(name, "r") as f:
+    with open(name, "rb") as f:
         for arch in ARCHITECTURES:
             if arch in name:
                 break
@@ -50,19 +55,24 @@ for name in tqdm.tqdm(arguments.parsed, desc="loading"):
         binary = os.path.splitext(os.path.basename(name))[0]
         binary = binary.replace(arch, "").replace(opt, "").strip("-")
 
-        data = json.load(f)
+        #data = json.load(f)
+        data = pickle.load(f)
 
-        for label, tokens in data.items():
-            label = label.split(":")[-1]
+        #for label, tokens in data.items():
+        for label, graph in data.items():
+            #label = label.split(":")[-1]
+            label = label[0]  #from preprocessing label = (function.getName(), hex(function.getEntryPoint().getOffset()),)
 
-            if label.startswith("0x"):
+            #if label.startswith("0x"):
+            if label.startswith("FUN"):
                 # skip unnamed functions
                 continue
 
             name = f"{binary}:{label}"
 
-            sample = " ".join(tokens)
-            sample = f"[CLS] {sample}"
+            #sample = " ".join(tokens)
+            #sample = f"[CLS] {sample}"
+            sample = pickle.dumps(graph)
 
             if name not in samples:
                 samples[name] = {}
@@ -106,13 +116,13 @@ for name1 in tqdm.tqdm(sorted(samples.keys()), desc="generating"):
                 "name": name1,
                 "arch": arch1,
                 "opt": opt1,
-                "text": samples[name1][arch1][opt1],
+                "cfg": samples[name1][arch1][opt1],
             },
             {
                 "name": name2,
                 "arch": arch2,
                 "opt": opt2,
-                "text": samples[name2][arch2][opt2],
+                "cfg": samples[name2][arch2][opt2],
             },
         ]
     )
@@ -123,11 +133,11 @@ dataset = {
     # "name1": [p[0]['name'] for p in pairs],
     # "arch1": [p[0]['arch'] for p in pairs],
     # "opt1": [p[0]['opt'] for p in pairs],
-    "text1": [p[0]["text"] for p in pairs],
+    "cfg1": [p[0]["cfg"] for p in pairs],
     # "name2": [p[1]['name'] for p in pairs],
     # "arch2": [p[1]['arch'] for p in pairs],
     # "opt2": [p[1]['opt'] for p in pairs],
-    "text2": [p[1]["text"] for p in pairs],
+    "cfg2": [p[1]["cfg"] for p in pairs],
     "label": labels,
 }
 dataset = datasets.Dataset.from_dict(dataset)
@@ -139,19 +149,102 @@ print("tokenizing samples...")
 
 
 def tokenize(batch):
-    encoded1 = tokenizer.encode_batch(batch["text1"])
-    encoded2 = tokenizer.encode_batch(batch["text2"])
+    #encoded1 = tokenizer.encode_batch(batch["text1"])
+    #encoded2 = tokenizer.encode_batch(batch["text2"])
 
-    batch["input_ids1"] = [s.ids for s in encoded1]
-    batch["attention_mask1"] = [s.attention_mask for s in encoded1]
-    batch["input_ids2"] = [s.ids for s in encoded2]
-    batch["attention_mask2"] = [s.attention_mask for s in encoded2]
+    #batch["input_ids1"] = [s.ids for s in encoded1]
+    #batch["attention_mask1"] = [s.attention_mask for s in encoded1]
+    #batch["input_ids2"] = [s.ids for s in encoded2]
+    #batch["attention_mask2"] = [s.attention_mask for s in encoded2]
+    
+    
+    for graph_obj in batch["cfg1"]: #parse through each function cfg
+        graph = pickle.loads(graph_obj)
+        laplacian = nx.normalized_laplacian_matrix(graph).toarray()
+        eigvals, eigvecs = np.linalg.eig(laplacian)
+        idx = eigvals.argsort()
+        eigvals, eigvecs = eigvals[idx], np.real(eigvecs[:,idx]) #Sorted by eigenvalue
+        input_ids = []
+        attention_mask = []
+        position_ids = []
+        for index, node in enumerate(graph.nodes()):
+            node = node.replace(",", "")
+            node = f"[CLS] {node}"
+            encoded = tokenizer.encode(node)
+            input_ids.extend(encoded.ids)
+            attention_mask.extend(encoded.attention_mask)
+            node_lpe = []
+            if len(eigvecs[index, 1:]) > 0:
+                for _ in range(len(encoded.ids)):
+                    node_lpe.extend([eigvecs[index, 1].tolist()]) #ignore trivial eigenvector and use fielder vector
+            else:
+                for _ in range(len(encoded.ids)):
+                    node_lpe.extend([0])
+            position_ids.extend(node_lpe)
+        if len(input_ids) >= sequence_length:  #truncate
+            input_ids = input_ids[:sequence_length]
+            attention_mask = attention_mask[:sequence_length]
+            position_ids = position_ids[:sequence_length]
+        else: #pad
+            while len(input_ids) < sequence_length:
+                input_ids.append(0)
+                attention_mask.append(0)
+                position_ids.append(0)
+        try:
+            batch["input_ids1"].extend([input_ids])
+            batch["attention_mask1"].extend([attention_mask])
+            batch["position_ids1"].extend([position_ids])
+        except:
+            batch["input_ids1"] = [input_ids]
+            batch["attention_mask1"] = [attention_mask]
+            batch["position_ids1"] = [position_ids]
+        
+    for graph_obj in batch["cfg2"]: #parse through each function cfg
+        graph = pickle.loads(graph_obj)
+        laplacian = nx.normalized_laplacian_matrix(graph).toarray()
+        eigvals, eigvecs = np.linalg.eig(laplacian)
+        idx = eigvals.argsort()
+        eigvals, eigvecs = eigvals[idx], np.real(eigvecs[:,idx]) #Sorted by eigenvalue
+        input_ids = []
+        attention_mask = []
+        position_ids = []
+        for index, node in enumerate(graph.nodes()):
+            node = node.replace(",", "")
+            node = f"[CLS] {node}"
+            encoded = tokenizer.encode(node)
+            input_ids.extend(encoded.ids)
+            attention_mask.extend(encoded.attention_mask)
+            node_lpe = []
+            if len(eigvecs[index, 1:]) > 0:
+                for _ in range(len(encoded.ids)):
+                    node_lpe.extend([eigvecs[index, 1].tolist()]) #ignore trivial eigenvector and use fielder vector
+            else:
+                for _ in range(len(encoded.ids)):
+                    node_lpe.extend([0])
+            position_ids.extend(node_lpe)
+        if len(input_ids) >= sequence_length:  #truncate
+            input_ids = input_ids[:sequence_length]
+            attention_mask = attention_mask[:sequence_length]
+            position_ids = position_ids[:sequence_length]
+        else: #pad
+            while len(input_ids) < sequence_length:
+                input_ids.append(0)
+                attention_mask.append(0)
+                position_ids.append(0)
+        try:
+            batch["input_ids2"].extend([input_ids])
+            batch["attention_mask2"].extend([attention_mask])
+            batch["position_ids2"].extend([position_ids])
+        except:
+            batch["input_ids2"] = [input_ids]
+            batch["attention_mask2"] = [attention_mask]
+            batch["position_ids2"] = [position_ids]
 
     return batch
 
 
 dataset = dataset.map(
-    tokenize, batched=True, remove_columns=["text1", "text2"], num_proc=8
+    tokenize, batched=True, remove_columns=["cfg1", "cfg2"], num_proc=8
 )
 
 dataset.save_to_disk(arguments.output)
