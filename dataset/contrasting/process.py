@@ -149,8 +149,6 @@ print("tokenizing samples...")
 
 
 def tokenize(batch):
-    #encoded1 = tokenizer.encode_batch(batch["text1"])
-    #encoded2 = tokenizer.encode_batch(batch["text2"])
 
     #batch["input_ids1"] = [s.ids for s in encoded1]
     #batch["attention_mask1"] = [s.attention_mask for s in encoded1]
