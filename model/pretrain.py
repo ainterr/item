@@ -25,8 +25,7 @@ accelerator = Accelerator()
 #from torch.nn.parallel import DistributedDataParallel as DDP ##
 #from torch.distributed import init_process_group, destroy_process_group ##
 
-accelerator.print("Ghidra fiedler vector w/o cudann benchmarch \n")
-accelerator.print("no loss gather, separate gather_for_metrics")
+accelerator.print("Simiar to original item but with pyhidra \n")
 
 parser = argparse.ArgumentParser(
     description="pretrain the model on a masked language modeling dataset",
