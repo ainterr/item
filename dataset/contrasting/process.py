@@ -12,7 +12,6 @@ import pickle
 import networkx as nx
 import numpy as np
 
-print("Ghidra 4d vector\n")
 
 ARCHITECTURES = ["x86-64", "arm-64", "mips-64", "x86-32"]
 OPTIMIZATIONS = ["O0", "O1", "O2", "O3"]
@@ -31,7 +30,7 @@ arguments = parser.parse_args()
 random.seed(42)
 
 sequence_length = 512
-##eigvec_dim = 10
+##eigvec_dim = 4
 tokenizer = tokenizers.Tokenizer.from_file(arguments.tokenizer)
 #tokenizer.enable_padding(length=sequence_length)
 #tokenizer.enable_truncation(max_length=sequence_length)
@@ -150,8 +149,6 @@ print("tokenizing samples...")
 
 
 def tokenize(batch):
-    #encoded1 = tokenizer.encode_batch(batch["text1"])
-    #encoded2 = tokenizer.encode_batch(batch["text2"])
 
     #batch["input_ids1"] = [s.ids for s in encoded1]
     #batch["attention_mask1"] = [s.attention_mask for s in encoded1]
