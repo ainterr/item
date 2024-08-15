@@ -14,8 +14,11 @@ from transformers.models.bert.modeling_bert import (
     BertForMaskedLM,
 )
 
+from accelerate import Accelerator
+accelerator = Accelerator()
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = accelerator.device
 
 
 class InstructionTraceConfig(transformers.BertConfig):
@@ -42,9 +45,8 @@ class InstructionTracePositionEmbedding(nn.Module):
         self.next_token_id = config.next_token_id
 
         self.token = nn.Embedding(config.vocab_size, config.hidden_size)
-        self.instruction = nn.Embedding(
-            config.max_position_embeddings, config.hidden_size
-        )
+        ##self.function = nn.Linear(config.max_position_embeddings, config.hidden_size)  #embed pe into higher dim space
+        self.instruction = nn.Embedding(config.max_position_embeddings, config.hidden_size)
         self.argument = nn.Embedding(config.max_position_embeddings, config.hidden_size)
 
         self.norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
@@ -64,10 +66,19 @@ class InstructionTracePositionEmbedding(nn.Module):
         assert past_key_values_length == 0
         assert input_ids.dim() <= 2
 
+        #print(input_ids.dim())
+        #print(input_ids.size())
         if input_ids.dim() == 1:
             tokens = input_ids.unsqueeze(0)
         else:
             tokens = input_ids
+        
+        #print(position_ids.dim())
+        #print(position_ids.size())
+        ##if position_ids.dim() == 2:
+            ##position_ids = position_ids.unsqueeze(1)
+        #print(position_ids.dim())
+        #print(position_ids.size())
 
         starts = torch.roll(tokens == self.next_token_id, 1)
         starts[:, 0] = False
@@ -78,9 +89,13 @@ class InstructionTracePositionEmbedding(nn.Module):
             arguments[i] = torch.cat([torch.arange(v) for v in torch.bincount(batch)])
 
         tokens = self.token(tokens)
+        ##functions = self.function(position_ids)
         instructions = self.instruction(instructions)
         arguments = self.argument(arguments)
+        
+        #print(tokens.size(), functions.size(), instructions.size(), arguments.size())
 
+        ##embedded = tokens + functions + instructions + arguments
         embedded = tokens + instructions + arguments
 
         embedded = self.norm(embedded)
@@ -161,7 +176,9 @@ class InstructionTraceEncoderTransformerForSequenceEmbedding(PreTrainedModel):
 
         self.embedding = InstructionTraceEmbeddingHead(config)
 
+    #def forward(self, input_ids, attention_mask, position_ids):
     def forward(self, input_ids, attention_mask):
+        #outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask, position_ids=position_ids)
         outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
 
         # Pool sequence model by taking the embedding of the [CLS] token - this
@@ -180,6 +197,18 @@ class InstructionTraceEncoderTransformerForSequenceEmbedding(PreTrainedModel):
             attentions=outputs.attentions,
         )
 
+class CosineInstructionTraceDifference(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+
+        self.activation = nn.Sigmoid()
+
+    def forward(self, first, second):
+        cos = nn.CosineSimilarity(dim=-1, eps=1e-6)
+        difference = cos(first, second)
+
+        return self.activation(difference)
+    
 
 class EuclidianInstructionTraceDifference(nn.Module):
     def __init__(self, config):
@@ -225,7 +254,7 @@ class InstructionTraceEncoderTransformerForSequenceSimilarity(PreTrainedModel):
         super().__init__(config)
 
         self.embedding = InstructionTraceEncoderTransformerForSequenceEmbedding(config)
-        self.difference = LearnedInstructionTraceDifference(config)
+        self.difference = CosineInstructionTraceDifference(config)
 
     def forward(
         self, input_ids1, attention_mask1, input_ids2, attention_mask2, labels=None

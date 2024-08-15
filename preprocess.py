@@ -11,6 +11,8 @@ import capstone
 import networkx as nx
 import numpy as np
 
+os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
+
 logger = logging.getLogger(__name__)
 
 pyhidra.start()
