@@ -37,21 +37,21 @@ for name in tqdm.tqdm(arguments.parsed, desc="loading"):
         data = pickle.load(f)
         data = data.values() #function cfgs
         samples.extend(data)
-print("first item of loaded data")
-print(samples[0])
+#print("first item of loaded data")
+#print(samples[0])
 
 for idx, item in enumerate(samples): #pickle each function cfg
     samples[idx] = pickle.dumps(item, protocol = 5)
-print("first item")
-print(samples[0])
+#print("first item")
+#print(samples[0])
 
 samples = {"cfgs": samples}
 
 dataset = datasets.Dataset.from_dict(samples)
-print(dataset)
-print(dataset["cfgs"][0])
+#print(dataset)
+#print(dataset["cfgs"][0])
 dataset = dataset.train_test_split(train_size=0.8, seed=42)
-print(dataset)
+#print(dataset)
 
 print("tokenizing samples...")
 
