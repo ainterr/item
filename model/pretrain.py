@@ -97,12 +97,12 @@ collator = transformers.DataCollatorForLanguageModeling(
 )
 
 batch_size = arguments.batch_size
-training = DataLoader(dataset["train"], shuffle=True, batch_size=batch_size, collate_fn=collator)
+training = DataLoader(dataset["train"], num_workers=40, shuffle=True, batch_size=batch_size, collate_fn=collator)
 #training = DataLoader(dataset["train"], shuffle=False, batch_size=batch_size, collate_fn=collator, sampler=DistributedSampler(dataset["train"]))
-validation = DataLoader(dataset["test"], shuffle=True, batch_size=batch_size, collate_fn=collator)
+validation = DataLoader(dataset["test"], num_workers=40, shuffle=True, batch_size=batch_size, collate_fn=collator)
 #validation = DataLoader(dataset["test"], shuffle=True, batch_size=batch_size, collate_fn=collator, sampler=DistributedSampler(dataset["test"]))
 
-learning_rate = 1e-4
+learning_rate = 2.5e-4
 epochs = arguments.epochs
 
 model.to(models.device)
@@ -193,16 +193,17 @@ for epoch in range(arguments.start_epoch, arguments.start_epoch + epochs):
         values.extend(predictions.tolist())
         labels.extend(references.tolist())
         losses.append(outputs.loss.item())
+        loop.set_postfix(loss=sum(losses) / len(losses))
         
-        # micro-averaged f1 score of masked token prediction
-        performance["f1"] = metrics.f1_score(labels, values, average="micro")
+    # micro-averaged f1 score of masked token prediction
+    performance["f1"] = metrics.f1_score(labels, values, average="micro")
 
-        # ppl is ill-defined for masked language modeling, however this is how
-        # the code from the Trex paper calculates it for masked language
-        # pretraining
-        loss = sum(losses) / len(losses) / math.sqrt(2)
-        performance["ppl"] = 2**loss
+    # ppl is ill-defined for masked language modeling, however this is how
+    # the code from the Trex paper calculates it for masked language
+    # pretraining
+    loss = sum(losses) / len(losses) / math.sqrt(2)
+    performance["ppl"] = 2**loss
 
-        loop.set_postfix(**performance)
+    loop.set_postfix(**performance)
 
     accelerator.print(f"evaluation performance: {performance}")

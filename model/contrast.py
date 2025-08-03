@@ -42,8 +42,8 @@ os.makedirs(arguments.output, exist_ok=True)
 
 sequence_length = 512
 tokenizer = tokenizers.Tokenizer.from_file(arguments.tokenizer)
-tokenizer.enable_padding(length=sequence_length)
-tokenizer.enable_truncation(max_length=sequence_length)
+#tokenizer.enable_padding(length=sequence_length)
+#tokenizer.enable_truncation(max_length=sequence_length)
 
 configuration = models.InstructionTraceConfig(
     vocab_size=tokenizer.get_vocab_size(),
@@ -76,7 +76,7 @@ validation = DataLoader(
     dataset["test"], shuffle=True, batch_size=batch_size, collate_fn=collator
 )
 
-learning_rate = 1e-4
+learning_rate = 5e-3
 epochs = arguments.epochs
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
@@ -103,7 +103,7 @@ parallel = False
 #    parallel = True
 #    model.embedding.bert = torch.nn.DataParallel(model.embedding.bert)
 
-model.to(models.device)
+#model.to(models.device)
 
 model, optimizer, training, validation, scheduler = accelerator.prepare(
     model, optimizer, training, validation, scheduler)
