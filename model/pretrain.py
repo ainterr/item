@@ -102,7 +102,7 @@ training = DataLoader(dataset["train"], num_workers=40, shuffle=True, batch_size
 validation = DataLoader(dataset["test"], num_workers=40, shuffle=True, batch_size=batch_size, collate_fn=collator)
 #validation = DataLoader(dataset["test"], shuffle=True, batch_size=batch_size, collate_fn=collator, sampler=DistributedSampler(dataset["test"]))
 
-learning_rate = 2.5e-4
+learning_rate = 1.5e-4
 epochs = arguments.epochs
 
 model.to(models.device)
@@ -113,6 +113,12 @@ steps = epochs * batches
 warmup = steps // (2 * epochs)
 if arguments.checkpoint:
     warmup = 0
+
+# Initialize early stopping variables
+patience = 5
+min_delta = 1e-3
+best_eval_loss = float("inf")
+patience_counter = 0
 
 scheduler = transformers.get_scheduler(
     "constant_with_warmup",
@@ -138,8 +144,8 @@ for epoch in range(arguments.start_epoch, arguments.start_epoch + epochs):
     #training.sampler.set_epoch(epoch) ##
 
     model.train()
-    losses = []
-    loop = tqdm.tqdm(training, desc="training")
+    train_losses = []
+    loop = tqdm.tqdm(training, desc="training", disable=not accelerator.is_main_process)
     for batch in loop:
         #batch = {k: v.to(models.device) for k, v in batch.items()}
 
@@ -151,9 +157,15 @@ for epoch in range(arguments.start_epoch, arguments.start_epoch + epochs):
         optimizer.step()
         scheduler.step()
         optimizer.zero_grad()
-
-        losses.append(loss.item())
-        loop.set_postfix(loss=sum(losses) / len(losses))
+        
+        batch_losses=accelerator.gather(loss.detach())
+        train_loss = batch_losses.mean().item()
+        train_losses.append(train_loss)
+        #loop.set_postfix(loss=sum(losses) / len(losses))
+        
+        if accelerator.is_main_process:
+            current_lr = scheduler.get_last_lr()[0]
+            loop.set_postfix(loss=sum(train_losses) / len(train_losses), lr=current_lr)
 
     if parallel:
         model.bert = model.bert.module
@@ -171,9 +183,9 @@ for epoch in range(arguments.start_epoch, arguments.start_epoch + epochs):
         )
 
     model.eval()
-    values, labels, losses = [], [], []
+    values, labels, eval_losses = [], [], []
     performance = {}
-    loop = tqdm.tqdm(validation, desc="validating")
+    loop = tqdm.tqdm(validation, desc="validating", disable=not accelerator.is_main_process)
     for batch in loop:
         #batch = {k: v.to(models.device) for k, v in batch.items()}
 
@@ -192,18 +204,38 @@ for epoch in range(arguments.start_epoch, arguments.start_epoch + epochs):
 
         values.extend(predictions.tolist())
         labels.extend(references.tolist())
-        losses.append(outputs.loss.item())
-        loop.set_postfix(loss=sum(losses) / len(losses))
+        #losses.append(outputs.loss.item())
         
+        eval_batch_losses=accelerator.gather(outputs.loss.detach())
+        batch_eval_loss = eval_batch_losses.mean().item()
+        eval_losses.append(batch_eval_loss)
+        
+        if accelerator.is_main_process:
+            loop.set_postfix(eval_loss=sum(eval_losses) / len(eval_losses))
+            #eval_losses.extend(eval_loss.cpu().tolist())
+            #loop.set_postfix(loss=global_loss)
+    
+    eval_loss = sum(eval_losses) / len(eval_losses)
+    
     # micro-averaged f1 score of masked token prediction
     performance["f1"] = metrics.f1_score(labels, values, average="micro")
 
     # ppl is ill-defined for masked language modeling, however this is how
     # the code from the Trex paper calculates it for masked language
     # pretraining
-    loss = sum(losses) / len(losses) / math.sqrt(2)
-    performance["ppl"] = 2**loss
+    avg_eval_loss = eval_loss / math.sqrt(2)
+    performance["ppl"] = 2**avg_eval_loss
 
-    loop.set_postfix(**performance)
-
-    accelerator.print(f"evaluation performance: {performance}")
+    if accelerator.is_main_process:
+        loop.set_postfix(**performance)
+        accelerator.print(f"evaluation performance: {performance}")
+    
+    #Early stopping logic
+    if best_eval_loss - eval_loss > min_delta:
+        best_eval_loss = eval_loss
+        patience_counter = 0
+    else:
+        patience_counter += 1
+        if patience_counter >= patience:
+            accelerator.print("Early stopping triggered.")
+            break
