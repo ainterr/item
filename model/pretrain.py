@@ -20,14 +20,6 @@ import models
 from accelerate import Accelerator
 accelerator = Accelerator()
 
-#import torch.multiprocessing as mp ##
-#from torch.utils.data.distributed import DistributedSampler ##
-#from torch.nn.parallel import DistributedDataParallel as DDP ##
-#from torch.distributed import init_process_group, destroy_process_group ##
-
-accelerator.print("Ghidra fiedler vector w/o cudann benchmarch \n")
-accelerator.print("no loss gather, separate gather_for_metrics")
-
 parser = argparse.ArgumentParser(
     description="pretrain the model on a masked language modeling dataset",
     formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -50,21 +42,8 @@ arguments = parser.parse_args()
 
 os.makedirs(arguments.output, exist_ok=True)
 
-#def ddp_setup(rank: int, world_size: int): ##
-#    """
-#    Args:
-#        rank: Unique identifier of each process
-#        world_size: Total number of processes
-#    """
-#    os.environ["MASTER_ADDR"] = "localhost"
-#    os.environ["MASTER_PORT"] = "12355"
-#    torch.cuda.set_device(rank)
-#    init_process_group(backend="nccl", rank=rank, world_size=world_size)
-
 sequence_length = 512
 tokenizer = tokenizers.Tokenizer.from_file(arguments.tokenizer)
-#tokenizer.enable_padding(length=sequence_length)
-#tokenizer.enable_truncation(max_length=sequence_length)
 
 configuration = models.InstructionTraceConfig(
     vocab_size=tokenizer.get_vocab_size(),
@@ -76,8 +55,6 @@ configuration = models.InstructionTraceConfig(
 model = models.InstructionTraceEncoderTransformerForMaskedLM(configuration)
 
 if arguments.checkpoint:
-    #state = torch.load(os.path.join(arguments.checkpoint, "pytorch_model.bin"))
-    
     state = load_file(os.path.join(arguments.model, "model.safetensors"))
     model.load_state_dict(state)
     
@@ -98,15 +75,13 @@ collator = transformers.DataCollatorForLanguageModeling(
 )
 
 batch_size = arguments.batch_size
-training = DataLoader(dataset["train"], shuffle=True, batch_size=batch_size, collate_fn=collator)
-#training = DataLoader(dataset["train"], shuffle=False, batch_size=batch_size, collate_fn=collator, sampler=DistributedSampler(dataset["train"]))
-validation = DataLoader(dataset["test"], shuffle=True, batch_size=batch_size, collate_fn=collator)
-#validation = DataLoader(dataset["test"], shuffle=True, batch_size=batch_size, collate_fn=collator, sampler=DistributedSampler(dataset["test"]))
+training = DataLoader(dataset["train"], shuffle=True, num_workers=8, batch_size=batch_size, collate_fn=collator)
+validation = DataLoader(dataset["test"], shuffle=True, num_workers=8, batch_size=batch_size, collate_fn=collator)
 
-learning_rate = 1e-4
+learning_rate = 1.5e-4
 epochs = arguments.epochs
 
-model.to(models.device)
+#model.to(models.device)
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
 batches = len(training)
@@ -115,8 +90,14 @@ warmup = steps // (2 * epochs)
 if arguments.checkpoint:
     warmup = 0
 
+# Initialize early stopping variables
+patience = 5
+min_delta = 1e-3
+best_eval_loss = float("inf")
+patience_counter = 0
+
 scheduler = transformers.get_scheduler(
-    "constant_with_warmup",
+    "constant",
     optimizer=optimizer,
     num_warmup_steps=warmup,
     num_training_steps=steps,
@@ -127,20 +108,16 @@ parallel = False
     #parallel = True
     #model.bert = torch.nn.DataParallel(model.bert)
 
-#model = DDP(model, device_ids=[gpu_id]) ##
-
 model, optimizer, training, validation, scheduler = accelerator.prepare(
     model, optimizer, training, validation, scheduler
 )
 
-#torch.backends.cudnn.benchmark = True
 for epoch in range(arguments.start_epoch, arguments.start_epoch + epochs):
     accelerator.print(f"epoch {epoch}")
-    #training.sampler.set_epoch(epoch) ##
 
     model.train()
-    losses = []
-    loop = tqdm.tqdm(training, desc="training")
+    train_losses = []
+    loop = tqdm.tqdm(training, desc="training", disable=not accelerator.is_main_process)
     for batch in loop:
         #batch = {k: v.to(models.device) for k, v in batch.items()}
 
@@ -152,9 +129,14 @@ for epoch in range(arguments.start_epoch, arguments.start_epoch + epochs):
         optimizer.step()
         scheduler.step()
         optimizer.zero_grad()
-
-        losses.append(loss.item())
-        loop.set_postfix(loss=sum(losses) / len(losses))
+        
+        batch_losses=accelerator.gather(loss.detach())
+        train_loss = batch_losses.mean().item()
+        train_losses.append(train_loss)
+        
+        if accelerator.is_main_process:
+            current_lr = scheduler.get_last_lr()[0]
+            loop.set_postfix(loss=sum(train_losses) / len(train_losses), lr=current_lr)
 
     if parallel:
         model.bert = model.bert.module
@@ -172,18 +154,16 @@ for epoch in range(arguments.start_epoch, arguments.start_epoch + epochs):
         )
 
     model.eval()
-    values, labels, losses = [], [], []
+    values, labels, eval_losses = [], [], []
     performance = {}
-    loop = tqdm.tqdm(validation, desc="validating")
+    loop = tqdm.tqdm(validation, desc="validating", disable=not accelerator.is_main_process)
     for batch in loop:
-        #batch = {k: v.to(models.device) for k, v in batch.items()}
 
         with torch.no_grad():
             outputs = model(**batch)
 
         references = batch["labels"]
         predictions = torch.argmax(outputs.logits, dim=-1)
-        #loss_values = outputs.loss.item()
         
         predictions = accelerator.gather_for_metrics(predictions)
         references = accelerator.gather_for_metrics(references)
@@ -193,17 +173,35 @@ for epoch in range(arguments.start_epoch, arguments.start_epoch + epochs):
 
         values.extend(predictions.tolist())
         labels.extend(references.tolist())
-        losses.append(outputs.loss.item())
         
-        # micro-averaged f1 score of masked token prediction
-        performance["f1"] = metrics.f1_score(labels, values, average="micro")
+        eval_batch_losses=accelerator.gather(outputs.loss.detach())
+        batch_eval_loss = eval_batch_losses.mean().item()
+        eval_losses.append(batch_eval_loss)
+        
+        if accelerator.is_main_process:
+            loop.set_postfix(eval_loss=sum(eval_losses) / len(eval_losses))
+            
+    eval_loss = sum(eval_losses) / len(eval_losses)
+        
+    # micro-averaged f1 score of masked token prediction
+    performance["f1"] = metrics.f1_score(labels, values, average="micro")
 
-        # ppl is ill-defined for masked language modeling, however this is how
-        # the code from the Trex paper calculates it for masked language
-        # pretraining
-        loss = sum(losses) / len(losses) / math.sqrt(2)
-        performance["ppl"] = 2**loss
+    # ppl is ill-defined for masked language modeling, however this is how
+    # the code from the Trex paper calculates it for masked language
+    # pretraining
+    avg_eval_loss = eval_loss / math.sqrt(2)
+    performance["ppl"] = 2**avg_eval_loss
 
+    if accelerator.is_main_process:
         loop.set_postfix(**performance)
-
-    accelerator.print(f"evaluation performance: {performance}")
+        accelerator.print(f"evaluation performance: {performance}")
+    
+    #Early stopping logic
+    if best_eval_loss - eval_loss > min_delta:
+        best_eval_loss = eval_loss
+        patience_counter = 0
+    else:
+        patience_counter += 1
+        if patience_counter >= patience:
+            accelerator.print("Early stopping triggered.")
+            break
